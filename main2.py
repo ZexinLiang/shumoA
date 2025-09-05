@@ -78,6 +78,7 @@ def cloud_center_at(t: float, explosion_pos: np.ndarray, t_explosion: float) -> 
 # Check segment P->Q intersects sphere (C,R)
 # --------------------------
 def segment_sphere_intersect_single(P: np.ndarray, Q: np.ndarray, C: np.ndarray, R: float) -> bool:
+    # print(f"Checking segment P={P} to Q={Q} against sphere C={C}, R={R}")
     d = Q - P
     f = P - C
     a = np.dot(d, d)
@@ -217,6 +218,7 @@ def find_shield_intervals_for_explosion(missile_pos0: np.ndarray, explosion_pos:
         e_ref = left
         if e_ref > s_ref + 1e-9:
             refined.append((s_ref, e_ref))
+        # print(refined)
     return refined
 #视为质点情况
 def find_shield_intervals_for_explosion_P(missile_pos0: np.ndarray, explosion_pos: np.ndarray, t_explosion: float,
@@ -367,28 +369,49 @@ def problem2_pso_optimize(
         "total_shield_time": tot
     }
 
+    # def fitness(x):
+    #     heading, speed, t_release, fuse_delay = x[0]
+    #     v_uav = uav_velocity_from_heading(speed, heading)
+    #     t_expl, expl_pos = explosion_position(FY_pos[uav_name], v_uav, t_release, fuse_delay)
+    #     # 如果爆炸点高度小于0，直接返回极差适应度
+    #     if expl_pos[2] < 0:
+    #         return 1e6
+    #     intervals = find_shield_intervals_for_explosion(M1_pos0, expl_pos, t_expl, dt_sample=0.01)
+    #     tot = total_time(intervals)
+    #     return -tot
+
 #问题2 使用差分进化算法
 def problem2_de_fitness(x, uav_name):
     heading, speed, t_release, fuse_delay = x
+    # print("heading:", heading, "speed:", speed, "t_release:", t_release, "fuse_delay:", fuse_delay)
     v_uav = uav_velocity_from_heading(speed, heading)
     t_expl, expl_pos = explosion_position(FY_pos[uav_name], v_uav, t_release, fuse_delay)
+    # print("expl_pos:", expl_pos, "t_expl:", t_expl)
     if expl_pos[2] < 0:
-        return 1e6
+        return 1e6   + np.random.rand()
     intervals = find_shield_intervals_for_explosion(M1_pos0, expl_pos, t_expl, dt_sample=0.01)
+    if intervals is None or len(intervals) == 0:
+        return 1e6  + np.random.rand()
     tot = total_time(intervals)
+    # if intervals is not None and len(intervals)>0:
+    #     print("intervals:", intervals, "tot:", tot)
     return -tot
 def problem2_de_optimize(
-    heading_span=math.pi*2/3,
     uav_name="FY1",
-    maxiter=200,
-    popsize=30
+    maxiter=500,
+    popsize=100
 ):
-    base_heading = math.atan2((fake_target - FY_pos[uav_name])[1], (fake_target - FY_pos[uav_name])[0])
     heading_min = -math.pi
     heading_max = math.pi
-    speed_min, speed_max = 110.0, 140.0
+    speed_min, speed_max = 70.0, 140.0
     t_release_min, t_release_max = 0.0, 70.0
     fuse_min, fuse_max = 0.0, 40.0
+
+    # heading_min = -math.pi
+    # heading_max = math.pi
+    # speed_min, speed_max = 119,121
+    # t_release_min, t_release_max = 1.4, 1.6
+    # fuse_min, fuse_max = 3.5,3.7
 
     bounds = [
         (heading_min, heading_max),
@@ -407,7 +430,8 @@ def problem2_de_optimize(
         popsize=popsize,
         polish=True,
         workers=-1,
-        updating='deferred'
+        updating='deferred',
+        tol=-1e6
     )
     best_heading, best_speed, best_t_release, best_fuse = result.x
     v_uav = uav_velocity_from_heading(best_speed, best_heading)
@@ -425,7 +449,7 @@ def problem2_de_optimize(
         "total_shield_time": tot
     }
 
-    
+
 # --------------------------
 # 问题3
 # --------------------------
@@ -442,10 +466,12 @@ def problem3_pso_FY1_three(
     base_heading = math.atan2((fake_target - FY_pos[uav_name])[1], (fake_target - FY_pos[uav_name])[0])
     heading_min = -math.pi
     heading_max = math.pi
-    speed_min, speed_max = uav_speed_bounds
-    t_release_min, t_release_max = 0.0, 70.0
-    fuse_min, fuse_max = 0.0, 40.0
-
+    speed_min, speed_max = 70,140
+    t_release_min, t_release_max = 0, 70
+    fuse_min, fuse_max =0,40
+    # speed = 120.0# 无人机速度
+    # t_release = 1.5 # 投放时间
+    # fuse_delay = 3.6 # 引信延时
     dim = 8  # heading, speed, t_release1, fuse1, t_release2, fuse2, t_release3, fuse3
     x_max = np.array([heading_max, speed_max, t_release_max, fuse_max, t_release_max, fuse_max, t_release_max, fuse_max])
     x_min = np.array([heading_min, speed_min, t_release_min, fuse_min, t_release_min, fuse_min, t_release_min, fuse_min])
@@ -594,6 +620,179 @@ def problem3_pso_FY1_three(
         df.to_excel(writer, sheet_name="drops", index=False)
         df_summary.to_excel(writer, sheet_name="summary", index=False)
     return best_plan
+
+
+def joint_shield_time(explosions, dt_sample=0.02, radius=cloud_radius):
+        if not explosions:
+            return 0.0
+        min_t = min(t_expl for t_expl, _ in explosions)
+        max_t = max(t_expl + cloud_duration for t_expl, _ in explosions)
+        times = np.arange(min_t, max_t + dt_sample/2, dt_sample)
+        if times.size == 0:
+            return 0.0
+        surface_points = sample_cylinder_surface(true_target, real_target_radius, real_target_height)
+        flags = np.zeros(len(times), dtype=bool)
+        for i, t in enumerate(times):
+            m_pos = missile_pos(M1_pos0, t)
+            active_clouds = [cloud_center_at(t, expl_pos, t_expl) for t_expl, expl_pos in explosions if t_expl <= t < t_expl + cloud_duration]
+            if not active_clouds:
+                continue
+            all_shielded = True
+            for q in surface_points:
+                shielded = any(segment_sphere_intersect_single(m_pos, q, c_pos, radius) for c_pos in active_clouds)
+                if not shielded:
+                    all_shielded = False
+                    break
+            flags[i] = all_shielded
+        # Compute rough intervals
+        intervals = []
+        in_seg = False
+        start = None
+        for i, t in enumerate(times):
+            if flags[i] and not in_seg:
+                in_seg = True
+                start = t
+            if not flags[i] and in_seg:
+                in_seg = False
+                intervals.append((start, times[i-1]))
+        if in_seg:
+            intervals.append((start, times[-1]))
+        # Refine intervals with binary search
+        refined = []
+        for s, e in intervals:
+            # Refine start
+            left = max(min_t, s - dt_sample)
+            right = s
+            for _ in range(25):
+                mid = 0.5 * (left + right)
+                m_pos = missile_pos(M1_pos0, mid)
+                active_clouds = [cloud_center_at(mid, expl_pos, t_expl) for t_expl, expl_pos in explosions if t_expl <= mid < t_expl + cloud_duration]
+                all_shielded = True
+                for q in surface_points:
+                    shielded = any(segment_sphere_intersect_single(m_pos, q, c_pos, radius) for c_pos in active_clouds)
+                    if not shielded:
+                        all_shielded = False
+                        break
+                if all_shielded:
+                    right = mid
+                else:
+                    left = mid
+            s_ref = right
+            # Refine end
+            left = e
+            right = min(max_t, e + dt_sample)
+            for _ in range(25):
+                mid = 0.5 * (left + right)
+                m_pos = missile_pos(M1_pos0, mid)
+                active_clouds = [cloud_center_at(mid, expl_pos, t_expl) for t_expl, expl_pos in explosions if t_expl <= mid < t_expl + cloud_duration]
+                all_shielded = True
+                for q in surface_points:
+                    shielded = any(segment_sphere_intersect_single(m_pos, q, c_pos, radius) for c_pos in active_clouds)
+                    if not shielded:
+                        all_shielded = False
+                        break
+                if all_shielded:
+                    left = mid
+                else:
+                    right = mid
+            e_ref = left
+            if e_ref > s_ref + 1e-9:
+                refined.append((s_ref, e_ref))
+        merged = merge_intervals(refined)
+        return total_time(merged)
+def problem3_de_fitness(x, uav_name):
+    heading, speed, tr1, fu1, tr2, fu2, tr3, fu3 = x
+    # sort t_releases to enforce order and check min_drop_interval
+    trs = sorted([tr1, tr2, tr3])
+    fus = [fu1, fu2, fu3]  # assign to sorted trs
+    if (trs[1] - trs[0] < min_drop_interval - 1e-9) or (trs[2] - trs[1] < min_drop_interval - 1e-9):
+        return 1e6  + np.random.rand() # penalty
+    v_uav = uav_velocity_from_heading(speed, heading)
+    explosions = []
+    for tr, fu in zip(trs, fus):
+        t_expl, expl_pos = explosion_position(FY_pos[uav_name], v_uav, tr, fu)
+        if expl_pos[2] < 0:
+            return 1e6  + np.random.rand() # penalty
+        explosions.append((t_expl, expl_pos))
+    tot = joint_shield_time(explosions)
+    # print("heading:", heading, "speed:", speed, "trs:", trs, "fus:", fus, "tot:", tot)
+    return -tot  # maximize
+def problem3_de_FY1_three(
+    uav_name="FY1",
+    iter_num=1000,  # increase for higher dim
+    pop_size=50,   # increase for higher dim
+    dt_refine=0.05  # sampling dt for joint shielding
+):
+    heading_min = -math.pi
+    heading_max = math.pi
+    speed_min, speed_max = 70,140
+    t_release_min, t_release_max = 0, 70
+    fuse_min, fuse_max =0,40
+    dim = 8  # heading, speed, t_release1, fuse1, t_release2, fuse2, t_release3, fuse3
+    bounds = [
+        (heading_min, heading_max),
+        (speed_min, speed_max),
+        (t_release_min, t_release_max),
+        (fuse_min, fuse_max),
+        (t_release_min, t_release_max),
+        (fuse_min, fuse_max),
+        (t_release_min, t_release_max),
+        (fuse_min, fuse_max)
+    ]
+    # 用partial包装参数，保证是全局函数
+    fit_func = functools.partial(problem3_de_fitness, uav_name=uav_name)
+    result = differential_evolution(
+        fit_func,
+        bounds,
+        maxiter=iter_num,
+        popsize=pop_size,
+        polish=True,
+        workers=-1,
+        updating='deferred',
+        tol=-1e6
+    )
+    best_heading, best_speed, tr1, fu1, tr2, fu2, tr3, fu3 = result.x
+    # reconstruct best plan with sorted t_releases
+    trs = sorted([tr1, tr2, tr3])
+    fus = [fu1, fu2, fu3]
+    v_uav = uav_velocity_from_heading(best_speed, best_heading)
+    assigned = []
+    explosions = []
+    for i, (tr, fu) in enumerate(zip(trs, fus), start=1):
+        t_expl, expl_pos = explosion_position(FY_pos[uav_name], v_uav, tr, fu)
+        assigned.append({
+            "drop_idx": i,
+            "t_release": tr,
+            "fuse_delay": fu,
+            "t_explosion": t_expl,
+            "explosion_pos": expl_pos
+        })
+        explosions.append((t_expl, expl_pos))
+    # Compute joint intervals for output (individual intervals not needed, but total)
+    total = joint_shield_time(explosions, dt_sample=dt_refine)
+    union_intervals = []  # For consistency, but since joint, we can compute intervals
+    best_plan = {"heading": best_heading, "speed": best_speed, "assigned": assigned, "union_intervals": union_intervals, "total": total}
+    # save Excel result1.xlsx (adjust for no individual intervals)
+    rows = []
+    for a in best_plan["assigned"]:
+        rows.append({
+            "drop_idx": a["drop_idx"],
+            "uav": uav_name,
+            "t_release": a["t_release"],
+            "fuse_delay": a["fuse_delay"],
+            "t_explosion": a["t_explosion"],
+            "explosion_x": float(a["explosion_pos"][0]),
+            "explosion_y": float(a["explosion_pos"][1]),
+            "explosion_z": float(a["explosion_pos"][2]),
+            "intervals": ""  # No individual intervals; joint computed separately
+        })
+    df = pd.DataFrame(rows)
+    df_summary = pd.DataFrame([{"total_shield": best_plan["total"], "heading_deg": math.degrees(best_plan["heading"]), "speed": best_plan["speed"]}])
+    with pd.ExcelWriter("result1.xlsx") as writer:
+        df.to_excel(writer, sheet_name="drops", index=False)
+        df_summary.to_excel(writer, sheet_name="summary", index=False)
+    return best_plan 
+    # Joint shielding function
 # --------------------------
 # Problem 4: FY1,FY2,FY3 each drop 1 munition to interfere M1
 # PSO: optimize heading, speed, t_release, fuse_delay for FY1, FY2, FY3 in one PSO to maximize joint union shielding
@@ -922,36 +1121,38 @@ if __name__ == "__main__":
     #     iter_num=200,              # PSO迭代次数
     #     pop_size=100                # PSO种群规模
     # )
-    p2_result = problem2_de_optimize()
-    if p2_result:
-        print("Problem2 best candidate summary:")
-        print("  speed:", p2_result["speed"], "heading_deg:", math.degrees(p2_result["heading"]))
-        print("  t_release:", p2_result["t_release"], "fuse:", p2_result["fuse_delay"], "total_shield:", p2_result["total_shield_time"])
-        # save plot
-        t_expl = p2_result["t_explosion"]
-        ts = np.linspace(t_expl, t_expl + cloud_duration, 600)
-        missile_z = [missile_pos(M1_pos0, t)[2] for t in ts]
-        cloud_z = [cloud_center_at(t, p2_result["explosion_pos"], t_expl)[2] for t in ts]
-        plt.figure(figsize=(8,4))
-        plt.plot(ts, missile_z, label="Missile Z")
-        plt.plot(ts, cloud_z, label="Cloud Z")
-        for s,e in p2_result["intervals"]:
-            plt.axvspan(s, e, color='gray', alpha=0.4)
-        plt.legend(); plt.xlabel("t (s)"); plt.ylabel("altitude (m)")
-        plt.title("Problem2 best candidate (z vs t)")
-        plt.tight_layout()
-        plt.savefig("problem2_best.png")
-        print("Saved problem2_best.png")
-    else:
-        print("Problem2 found no positive candidate.")
-    print("\n")
+
+    # p2_result = problem2_de_optimize()
+    # if p2_result:
+    #     print("Problem2 best candidate summary:")
+    #     print("  speed:", p2_result["speed"], "heading_deg:", math.degrees(p2_result["heading"]))
+    #     print("  t_release:", p2_result["t_release"], "fuse:", p2_result["fuse_delay"], "total_shield:", p2_result["total_shield_time"])
+    #     # save plot
+    #     t_expl = p2_result["t_explosion"]
+    #     ts = np.linspace(t_expl, t_expl + cloud_duration, 600)
+    #     missile_z = [missile_pos(M1_pos0, t)[2] for t in ts]
+    #     cloud_z = [cloud_center_at(t, p2_result["explosion_pos"], t_expl)[2] for t in ts]
+    #     plt.figure(figsize=(8,4))
+    #     plt.plot(ts, missile_z, label="Missile Z")
+    #     plt.plot(ts, cloud_z, label="Cloud Z")
+    #     for s,e in p2_result["intervals"]:
+    #         plt.axvspan(s, e, color='gray', alpha=0.4)
+    #     plt.legend(); plt.xlabel("t (s)"); plt.ylabel("altitude (m)")
+    #     plt.title("Problem2 best candidate (z vs t)")
+    #     plt.tight_layout()
+    #     plt.savefig("problem2_best.png")
+    #     print("Saved problem2_best.png")
+    # else:
+    #     print("Problem2 found no positive candidate.")
+    # print("\n")
 
     # result = problem3_pso_FY1_three()
-    # print("Problem 3 completed. Results saved to result1.xlsx")
-    # print(f"Best total shield time: {result['total']:.6f} s")
-    # print(f"Heading: {math.degrees(result['heading']):.2f}°, Speed: {result['speed']:.2f} m/s")
-    # for drop in result["assigned"]:
-    #     print(f"Drop {drop['drop_idx']}: t_release={drop['t_release']:.2f}s, fuse_delay={drop['fuse_delay']:.2f}s")
+    result = problem3_de_FY1_three()
+    print("Problem 3 completed. Results saved to result1.xlsx")
+    print(f"Best total shield time: {result['total']:.6f} s")
+    print(f"Heading: {math.degrees(result['heading']):.2f}°, Speed: {result['speed']:.2f} m/s")
+    for drop in result["assigned"]:
+        print(f"Drop {drop['drop_idx']}: t_release={drop['t_release']:.2f}s, fuse_delay={drop['fuse_delay']:.2f}s")
 
 
     # result = problem4_pso_three_uavs_one_each()
