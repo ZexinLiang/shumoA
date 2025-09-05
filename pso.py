@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
+from joblib import Parallel, delayed
 
 # 测试用适应度函数：Rosenbrock 函数
 def fit_fun(x):
@@ -119,6 +119,23 @@ class PSO:
                 break
 
         return self.fitness_val_list, self.get_bestPosition()
+
+    # def update_ndim(self):
+    #     for i in range(self.iter_num):
+    #         # 并行更新速度
+    #         Parallel(n_jobs=-1)(
+    #             delayed(self.update_vel)(part) for part in self.Particle_list
+    #         )
+    #         # 并行更新位置和适应度
+    #         Parallel(n_jobs=-1)(
+    #             delayed(self.update_pos)(part) for part in self.Particle_list
+    #         )
+    #         self.fitness_val_list.append(self.get_bestFitnessValue())
+    #         print(f'第{i+1}次最佳适应值为 {self.get_bestFitnessValue():.6f}')
+    #         if self.get_bestFitnessValue() < self.tol:
+    #             break
+
+    #     return self.fitness_val_list, self.get_bestPosition()
 
 
 if __name__ == '__main__':
