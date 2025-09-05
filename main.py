@@ -7,7 +7,7 @@ from typing import List, Tuple, Dict
 # --------------------------
 # Constants from PDF
 # --------------------------
-g = 9.80665  # m/s^2
+g = 9.80  # m/s^2
 cloud_descent_rate = 3.0  # m/s
 cloud_radius = 10.0  # m
 cloud_duration = 20.0  # s
@@ -290,15 +290,11 @@ def total_time(intervals: List[Tuple[float,float]]) -> float:
 # 问题1
 # --------------------------
 def problem1():
-    # speed = 120.0# 无人机速度
-    # t_release = 1.5 # 投放时间
-    # fuse_delay = 3.6 # 引信延时
-    # heading = math.atan2((fake_target - FY_pos["FY1"])[1], (fake_target - FY_pos["FY1"])[0])
-    
-    speed = 70
-    t_release = 0
-    fuse_delay = 0.16263117807177294
-    heading = 120 * math.pi / 180.0
+    speed = 120.0# 无人机速度
+    t_release = 1.5 # 投放时间
+    fuse_delay = 3.6 # 引信延时
+    heading = math.atan2((fake_target - FY_pos["FY1"])[1], (fake_target - FY_pos["FY1"])[0])
+
     # 计算引爆位置和时间
     v_uav = uav_velocity_from_heading(speed, heading)
     t_expl, expl_pos = explosion_position(FY_pos["FY1"], v_uav, t_release, fuse_delay)
@@ -322,7 +318,7 @@ def problem2_pso_optimize(
     heading_span=math.pi*2/3,
     uav_name="FY1",
     iter_num=100,
-    pop_size=20
+    pop_size=100
 ):
     base_heading = math.atan2((fake_target - FY_pos[uav_name])[1], (fake_target - FY_pos[uav_name])[0])
     # heading_min = base_heading - heading_span / 2
@@ -386,7 +382,7 @@ def problem3_pso_FY1_three(
     heading_max = math.pi
     speed_min, speed_max = uav_speed_bounds
     t_release_min, t_release_max = 0.0, 70.0
-    fuse_min, fuse_max = 0.0, 40.0  # avoid fuse=0
+    fuse_min, fuse_max = 0.0, 40.0
 
     dim = 8  # heading, speed, t_release1, fuse1, t_release2, fuse2, t_release3, fuse3
     x_max = np.array([heading_max, speed_max, t_release_max, fuse_max, t_release_max, fuse_max, t_release_max, fuse_max])
@@ -534,59 +530,165 @@ def problem3_pso_FY1_three(
         df.to_excel(writer, sheet_name="drops", index=False)
         df_summary.to_excel(writer, sheet_name="summary", index=False)
     return best_plan
-
 # --------------------------
 # Problem 4: FY1,FY2,FY3 each drop 1 munition to interfere M1
-# Strategy: for each UAV find best single drop (heading+speed+t_release+fuse) greedily to maximize union.
+# PSO: optimize heading, speed, t_release, fuse_delay for FY1, FY2, FY3 in one PSO to maximize joint union shielding
+# Constraints: respect physical bounds and joint shielding computation
 # --------------------------
-def problem4_three_uavs_one_each(
-    uav_names=("FY1","FY2","FY3"),
-    heading_span=math.pi/2, heading_steps=7, speed_steps=4,
-    t_release_grid=None, fuse_grid=None, dt_coarse=0.05, dt_refine=0.01
+def problem4_pso_three_uavs_one_each(
+    uav_names=("FY1", "FY2", "FY3"),
+    heading_span=math.pi/2,
+    iter_num=500,  # increased for 12D optimization
+    pop_size=1000,   # increased for 12D optimization
+    dt_refine=0.01
 ):
-    if t_release_grid is None:
-        t_release_grid = np.linspace(0.0, 70.0, 71)
-    if fuse_grid is None:
-        fuse_grid = np.linspace(0.5, 40.0, 40)
+    """
+    Return best plan for FY1, FY2, FY3 to each drop 1 munition to maximize M1 shielding using a single PSO.
+    """
+    # Define bounds for all 12 variables
+    base_headings = [math.atan2((fake_target - FY_pos[uav])[1], (fake_target - FY_pos[uav])[0]) for uav in uav_names]
+    heading_mins = -math.pi * np.ones(3)  # allow full circle headings
+    heading_maxs = math.pi * np.ones(3)
+    speed_min, speed_max = uav_speed_bounds
+    t_release_min, t_release_max = 0.0, 70.0
+    fuse_min, fuse_max = 0, 40.0  # avoid fuse=0
 
+    dim = 12  # 4 vars per UAV: heading, speed, t_release, fuse_delay
+    x_max = np.array([heading_maxs[0], speed_max, t_release_max, fuse_max,
+                     heading_maxs[1], speed_max, t_release_max, fuse_max,
+                     heading_maxs[2], speed_max, t_release_max, fuse_max])
+    x_min = np.array([heading_mins[0], speed_min, t_release_min, fuse_min,
+                     heading_mins[1], speed_min, t_release_min, fuse_min,
+                     heading_mins[2], speed_min, t_release_min, fuse_min])
+    max_vel = (x_max - x_min) / 2
+
+    # Joint shielding function
+    def joint_shield_time(explosions, dt_sample=dt_refine, radius=cloud_radius):
+        if not explosions:
+            return 0.0
+        min_t = min(t_expl for t_expl, _ in explosions)
+        max_t = max(t_expl + cloud_duration for t_expl, _ in explosions)
+        times = np.arange(min_t, max_t + dt_sample/2, dt_sample)
+        if times.size == 0:
+            return 0.0
+        surface_points = sample_cylinder_surface(true_target, real_target_radius, real_target_height)
+        flags = np.zeros(len(times), dtype=bool)
+        for i, t in enumerate(times):
+            m_pos = missile_pos(M1_pos0, t)
+            active_clouds = [cloud_center_at(t, expl_pos, t_expl) for t_expl, expl_pos in explosions if t_expl <= t < t_expl + cloud_duration]
+            if not active_clouds:
+                continue
+            all_shielded = True
+            for q in surface_points:
+                shielded = any(segment_sphere_intersect_single(m_pos, q, c_pos, radius) for c_pos in active_clouds)
+                if not shielded:
+                    all_shielded = False
+                    break
+            flags[i] = all_shielded
+        # Compute rough intervals
+        intervals = []
+        in_seg = False
+        start = None
+        for i, t in enumerate(times):
+            if flags[i] and not in_seg:
+                in_seg = True
+                start = t
+            if not flags[i] and in_seg:
+                in_seg = False
+                intervals.append((start, times[i-1]))
+        if in_seg:
+            intervals.append((start, times[-1]))
+        # Refine intervals with binary search
+        refined = []
+        for s, e in intervals:
+            left = max(min_t, s - dt_sample)
+            right = s
+            for _ in range(25):
+                mid = 0.5 * (left + right)
+                m_pos = missile_pos(M1_pos0, mid)
+                active_clouds = [cloud_center_at(mid, expl_pos, t_expl) for t_expl, expl_pos in explosions if t_expl <= mid < t_expl + cloud_duration]
+                all_shielded = True
+                for q in surface_points:
+                    shielded = any(segment_sphere_intersect_single(m_pos, q, c_pos, radius) for c_pos in active_clouds)
+                    if not shielded:
+                        all_shielded = False
+                        break
+                if all_shielded:
+                    right = mid
+                else:
+                    left = mid
+            s_ref = right
+            left = e
+            right = min(max_t, e + dt_sample)
+            for _ in range(25):
+                mid = 0.5 * (left + right)
+                m_pos = missile_pos(M1_pos0, mid)
+                active_clouds = [cloud_center_at(mid, expl_pos, t_expl) for t_expl, expl_pos in explosions if t_expl <= mid < t_expl + cloud_duration]
+                all_shielded = True
+                for q in surface_points:
+                    shielded = any(segment_sphere_intersect_single(m_pos, q, c_pos, radius) for c_pos in active_clouds)
+                    if not shielded:
+                        all_shielded = False
+                        break
+                if all_shielded:
+                    left = mid
+                else:
+                    right = mid
+            e_ref = left
+            if e_ref > s_ref + 1e-9:
+                refined.append((s_ref, e_ref))
+        merged = merge_intervals(refined)
+        return total_time(merged)
+
+    def fitness(x):
+        # Extract parameters for all 3 UAVs
+        h1, s1, tr1, fu1, h2, s2, tr2, fu2, h3, s3, tr3, fu3 = x[0]
+        explosions = []
+        for uav, h, s, tr, fu in zip(uav_names, [h1, h2, h3], [s1, s2, s3], [tr1, tr2, tr3], [fu1, fu2, fu3]):
+            v_uav = uav_velocity_from_heading(s, h)
+            t_expl, expl_pos = explosion_position(FY_pos[uav], v_uav, tr, fu)
+            if expl_pos[2] < 0:
+                return 1e6  # penalty for invalid explosion height
+            explosions.append((t_expl, expl_pos))
+        tot = joint_shield_time(explosions)
+        return -tot  # maximize total shield time
+
+    from pso import PSO
+    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=0.5)
+    fit_var_list, best_pos = pso_solver.update_ndim()
+    # Reconstruct best plan
+    h1, s1, tr1, fu1, h2, s2, tr2, fu2, h3, s3, tr3, fu3 = best_pos[0]
     assigned = []
-    union_all = []
-    for uav in uav_names:
-        # search best single drop for this uav given union_all already
-        best_local = None
-        base_heading = math.atan2((fake_target - FY_pos[uav])[1], (fake_target - FY_pos[uav])[0])
-        headings = np.linspace(base_heading - heading_span/2, base_heading + heading_span/2, heading_steps)
-        speeds = np.linspace(uav_speed_bounds[0], uav_speed_bounds[1], speed_steps)
-        for heading in headings:
-            for speed in speeds:
-                v = uav_velocity_from_heading(speed, heading)
-                for tr in t_release_grid:
-                    for fu in fuse_grid:
-                        t_expl, expl_pos = explosion_position(FY_pos[uav], v, tr, fu)
-                        ints = find_shield_intervals_for_explosion(M1_pos0, expl_pos, t_expl, dt_sample=dt_refine)
-                        new_union = merge_intervals(union_all + ints)
-                        new_total = total_time(new_union)
-                        old_total = total_time(union_all)
-                        marginal = new_total - old_total
-                        if (best_local is None) or (marginal > best_local["marginal"]):
-                            best_local = {"uav": uav, "heading":heading, "speed":speed, "t_release":tr, "fuse":fu, "explosion_pos":expl_pos, "intervals":ints, "marginal":marginal, "new_union":new_union}
-        if best_local is not None:
-            assigned.append(best_local)
-            union_all = best_local["new_union"]
-    # save to result2.xlsx
-    rows=[]
+    explosions = []
+    for uav, h, s, tr, fu in zip(uav_names, [h1, h2, h3], [s1, s2, s3], [tr1, tr2, tr3], [fu1, fu2, fu3]):
+        v_uav = uav_velocity_from_heading(s, h)
+        t_expl, expl_pos = explosion_position(FY_pos[uav], v_uav, tr, fu)
+        ints = find_shield_intervals_for_explosion(M1_pos0, expl_pos, t_expl, dt_sample=dt_refine)
+        assigned.append({
+            "uav": uav, "heading": h, "speed": s, "t_release": tr, "fuse": fu,
+            "t_explosion": t_expl, "explosion_pos": expl_pos, "intervals": ints
+        })
+        explosions.append((t_expl, expl_pos))
+    total = joint_shield_time(explosions)
+    union_all = merge_intervals([i for a in assigned for i in a["intervals"]])  # Recompute union for consistency
+
+    # Save to result2.xlsx
+    rows = []
     for a in assigned:
         rows.append({
-            "uav": a["uav"], "t_release":a["t_release"], "fuse_delay":a["fuse"], "t_explosion": a["t_release"]+a["fuse"],
-            "explosion_x": float(a["explosion_pos"][0]), "explosion_y": float(a["explosion_pos"][1]), "explosion_z": float(a["explosion_pos"][2]),
-            "intervals": ";".join([f"{s:.6f}-{e:.6f}" for s,e in a["intervals"]]), "marginal": a["marginal"]
+            "uav": a["uav"], "t_release": a["t_release"], "fuse_delay": a["fuse"],
+            "t_explosion": a["t_explosion"],
+            "explosion_x": float(a["explosion_pos"][0]), "explosion_y": float(a["explosion_pos"][1]),
+            "explosion_z": float(a["explosion_pos"][2]),
+            "intervals": ";".join([f"{s:.6f}-{e:.6f}" for s, e in a["intervals"]]),
+            "marginal": total_time(a["intervals"])  # Approx marginal for each drop
         })
-    df=pd.DataFrame(rows)
-    df_summary = pd.DataFrame([{"total_shield": total_time(union_all)}])
+    df = pd.DataFrame(rows)
+    df_summary = pd.DataFrame([{"total_shield": total}])
     with pd.ExcelWriter("result2.xlsx") as writer:
         df.to_excel(writer, sheet_name="drops", index=False)
         df_summary.to_excel(writer, sheet_name="summary", index=False)
-    return {"assigned":assigned,"union":union_all}
+    return {"assigned": assigned, "union": union_all}
 
 # --------------------------
 # Problem 5: 5 UAVs, each up to 3 munitions, interfere M1,M2,M3
@@ -749,10 +851,10 @@ if __name__ == "__main__":
     # print("\n")
 
     # p2_result = problem2_pso_optimize(
-    #     heading_span=math.pi*2/3,  # 搜索角度范围
+    #     heading_span=math.pi*2/3,
     #     uav_name="FY1",            # 无人机名称
-    #     iter_num=200,              # PSO迭代次数
-    #     pop_size=20                # PSO种群规模
+    #     iter_num=100,              # PSO迭代次数
+    #     pop_size=100                # PSO种群规模
     # )
     # if p2_result:
     #     print("Problem2 best candidate summary:")
@@ -777,9 +879,16 @@ if __name__ == "__main__":
     #     print("Problem2 found no positive candidate.")
     # print("\n")
 
-    result = problem3_pso_FY1_three()
-    print("Problem 3 completed. Results saved to result1.xlsx")
-    print(f"Best total shield time: {result['total']:.6f} s")
-    print(f"Heading: {math.degrees(result['heading']):.2f}°, Speed: {result['speed']:.2f} m/s")
+    # result = problem3_pso_FY1_three()
+    # print("Problem 3 completed. Results saved to result1.xlsx")
+    # print(f"Best total shield time: {result['total']:.6f} s")
+    # print(f"Heading: {math.degrees(result['heading']):.2f}°, Speed: {result['speed']:.2f} m/s")
+    # for drop in result["assigned"]:
+    #     print(f"Drop {drop['drop_idx']}: t_release={drop['t_release']:.2f}s, fuse_delay={drop['fuse_delay']:.2f}s")
+
+
+    result = problem4_pso_three_uavs_one_each()
+    print("Problem 4 completed. Results saved to result2.xlsx")
+    print(f"Total shield time: {result['union']:.6f} s")
     for drop in result["assigned"]:
-        print(f"Drop {drop['drop_idx']}: t_release={drop['t_release']:.2f}s, fuse_delay={drop['fuse_delay']:.2f}s")
+        print(f"UAV {drop['uav']}: t_release={drop['t_release']:.2f}s, fuse_delay={drop['fuse']:.2f}s, intervals={drop['intervals']}")
