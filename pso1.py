@@ -115,8 +115,8 @@ class PSO:
         if value < self.get_bestFitnessValue():
             self.set_bestFitnessValue(value)
             self.set_bestPosition(pos_value)
-            
-    def update_ndim(self, mutation_rate=0.1):
+
+    def update_ndim(self, mutation_rate=0.6):
         for i in range(self.iter_num):
             for part in self.Particle_list:
                 self.update_vel(part)

@@ -322,8 +322,8 @@ def problem1():
 def problem2_pso_optimize(
     heading_span=math.pi*2/3,
     uav_name="FY1",
-    iter_num=100,
-    pop_size=20
+    iter_num=200,
+    pop_size=100
 ):
     base_heading = math.atan2((fake_target - FY_pos[uav_name])[1], (fake_target - FY_pos[uav_name])[0])
     # heading_min = base_heading - heading_span / 2
@@ -338,7 +338,7 @@ def problem2_pso_optimize(
     dim = 4
     x_max = np.array([heading_max, speed_max, t_release_max, fuse_max])
     x_min = np.array([heading_min, speed_min, t_release_min, fuse_min])
-    max_vel = (x_max - x_min) / 2
+    max_vel = (x_max - x_min) / 6
     
     def fitness(x):
         heading, speed, t_release, fuse_delay = x
@@ -347,12 +347,12 @@ def problem2_pso_optimize(
         # 如果爆炸点高度小于0，直接返回极差适应度
         if expl_pos[2] < 0:
             return 1e6
-        intervals = find_shield_intervals_for_explosion(M1_pos0, expl_pos, t_expl, dt_sample=0.01)
+        intervals = find_shield_intervals_for_explosion(M1_pos0, expl_pos, t_expl, dt_sample=0.5)
         tot = total_time(intervals)
         return -tot
 
     from pso1 import PSO
-    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=1.18)
+    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=0.8)
     fit_var_list, best_pos = pso_solver.update_ndim()
     best_heading, best_speed, best_t_release, best_fuse = best_pos[0]
     v_uav = uav_velocity_from_heading(best_speed, best_heading)
@@ -591,9 +591,9 @@ def problem2_cma_optimize(heading_span=math.pi*2/3, uav_name="FY1", sigma=15, ma
 def problem3_pso_FY1_three(
     heading_span=math.pi/2,
     uav_name="FY1",
-    iter_num=1000,  # increase for higher dim
-    pop_size=50,   # increase for higher dim
-    dt_refine=0.05  # sampling dt for joint shielding
+    iter_num=300,  # increase for higher dim
+    pop_size=500,   # increase for higher dim
+    dt_refine=0.5  # sampling dt for joint shielding
 ):
     """
     Return best plan for FY1 to drop 3 munitions to maximize M1 shielding using PSO.
@@ -610,7 +610,7 @@ def problem3_pso_FY1_three(
     dim = 8  # heading, speed, t_release1, fuse1, t_release2, fuse2, t_release3, fuse3
     x_max = np.array([heading_max, speed_max, t_release_max, fuse_max, t_release_max, fuse_max, t_release_max, fuse_max])
     x_min = np.array([heading_min, speed_min, t_release_min, fuse_min, t_release_min, fuse_min, t_release_min, fuse_min])
-    max_vel = (x_max - x_min) / 2
+    max_vel = (x_max - x_min) / 6
     
     # Joint shielding function
     def joint_shield_time(explosions, dt_sample=dt_refine, radius=cloud_radius):
@@ -693,7 +693,7 @@ def problem3_pso_FY1_three(
         return total_time(merged)
     
     def fitness(x):
-        heading, speed, tr1, fu1, tr2, fu2, tr3, fu3 = x[0]
+        heading, speed, tr1, fu1, tr2, fu2, tr3, fu3 = x
         # sort t_releases to enforce order and check min_drop_interval
         trs = sorted([tr1, tr2, tr3])
         fus = [fu1, fu2, fu3]  # assign to sorted trs
@@ -711,10 +711,10 @@ def problem3_pso_FY1_three(
 
     from pso1 import PSO
     #pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=1.3)
-    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=1.18)
+    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=0.8)
     
     fit_var_list, best_pos = pso_solver.update_ndim()
-    best_heading, best_speed, tr1, fu1, tr2, fu2, tr3, fu3 = best_pos[0]
+    best_heading, best_speed, tr1, fu1, tr2, fu2, tr3, fu3 = best_pos
     # reconstruct best plan with sorted t_releases
     trs = sorted([tr1, tr2, tr3])
     fus = [fu1, fu2, fu3]
@@ -1724,8 +1724,8 @@ def prob3_check(heading, speed, tr1, fu1, tr2, fu2, tr3, fu3):
     print("fitness:", fitness_val)
 
 if __name__ == "__main__":
-    # np.random.seed(42)
-    # random.seed(42)
+    np.random.seed(42)
+    random.seed(42)
     # p1 = problem1()
     # print("问题1结果:")
     # print("  爆炸位置:", p1["explosion_pos"])
@@ -1735,47 +1735,48 @@ if __name__ == "__main__":
 
     # print("\n")
 
-    p2_result = problem2_pso_optimize(
-        heading_span=math.pi*2/3,
-        uav_name="FY1",            # 无人机名称
-        iter_num=100,              # PSO迭代次数
-        pop_size=200                # PSO种群规模
-    )
+    # p2_result = problem2_pso_optimize(
+    #     heading_span=math.pi*2/3,
+    #     uav_name="FY1",            # 无人机名称
+    #     iter_num=300,              # PSO迭代次数
+    #     pop_size=200                # PSO种群规模
+    # )
 
     # # p2_result = problem2_de_optimize()
 
     # # p2_result = problem2_cma_optimize()
 
-    if p2_result:
-        print("Problem2 best candidate summary:")
-        print("  speed:", p2_result["speed"], "heading_deg:", math.degrees(p2_result["heading"]))
-        print("  t_release:", p2_result["t_release"], "fuse:", p2_result["fuse_delay"], "total_shield:", p2_result["total_shield_time"])
-        # save plot
-        t_expl = p2_result["t_explosion"]
-        ts = np.linspace(t_expl, t_expl + cloud_duration, 600)
-        missile_z = [missile_pos(M1_pos0, t)[2] for t in ts]
-        cloud_z = [cloud_center_at(t, p2_result["explosion_pos"], t_expl)[2] for t in ts]
-        plt.figure(figsize=(8,4))
-        plt.plot(ts, missile_z, label="Missile Z")
-        plt.plot(ts, cloud_z, label="Cloud Z")
-        for s,e in p2_result["intervals"]:
-            plt.axvspan(s, e, color='gray', alpha=0.4)
-        plt.legend(); plt.xlabel("t (s)"); plt.ylabel("altitude (m)")
-        plt.title("Problem2 best candidate (z vs t)")
-        plt.tight_layout()
-        plt.savefig("problem2_best.png")
-        print("Saved problem2_best.png")
-    else:
-        print("Problem2 found no positive candidate.")
-    print("\n")
+    # if p2_result:
+    #     print("Problem2 best candidate summary:")
+    #     print("  speed:", p2_result["speed"], "heading_deg:", math.degrees(p2_result["heading"]))
+    #     print("  t_release:", p2_result["t_release"], "fuse:", p2_result["fuse_delay"], "total_shield:", p2_result["total_shield_time"])
+    #     # save plot
+    #     t_expl = p2_result["t_explosion"]
+    #     ts = np.linspace(t_expl, t_expl + cloud_duration, 600)
+    #     missile_z = [missile_pos(M1_pos0, t)[2] for t in ts]
+    #     cloud_z = [cloud_center_at(t, p2_result["explosion_pos"], t_expl)[2] for t in ts]
+    #     plt.figure(figsize=(8,4))
+    #     plt.plot(ts, missile_z, label="Missile Z")
+    #     plt.plot(ts, cloud_z, label="Cloud Z")
+    #     for s,e in p2_result["intervals"]:
+    #         plt.axvspan(s, e, color='gray', alpha=0.4)
+    #     plt.legend(); plt.xlabel("t (s)"); plt.ylabel("altitude (m)")
+    #     plt.title("Problem2 best candidate (z vs t)")
+    #     plt.tight_layout()
+    #     plt.savefig("problem2_best.png")
+    #     print("Saved problem2_best.png")
+    # else:
+    #     print("Problem2 found no positive candidate.")
+    # print("\n")
 
-    # result = problem3_pso_FY1_three()
-    # # result = problem3_de_FY1_three()
-    # print("Problem 3 completed. Results saved to result1.xlsx")
-    # print(f"Best total shield time: {result['total']:.6f} s")
-    # print(f"Heading: {math.degrees(result['heading']):.2f}°, Speed: {result['speed']:.2f} m/s")
-    # for drop in result["assigned"]:
-    #     print(f"Drop {drop['drop_idx']}: t_release={drop['t_release']:.2f}s, fuse_delay={drop['fuse_delay']:.2f}s")
+    result = problem3_pso_FY1_three()
+    print("result:", result)
+    # result = problem3_de_FY1_three()
+    print("Problem 3 completed. Results saved to result1.xlsx")
+    print(f"Best total shield time: {result['total']:.6f} s")
+    print(f"Heading: {math.degrees(result['heading']):.2f}°, Speed: {result['speed']:.2f} m/s")
+    for drop in result["assigned"]:
+        print(f"Drop {drop['drop_idx']}: t_release={drop['t_release']:.2f}s, fuse_delay={drop['fuse_delay']:.2f}s")
 
 
     # result = problem4_pso_three_uavs_one_each()
