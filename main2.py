@@ -338,7 +338,7 @@ def problem2_pso_optimize(
     dim = 4
     x_max = np.array([heading_max, speed_max, t_release_max, fuse_max])
     x_min = np.array([heading_min, speed_min, t_release_min, fuse_min])
-    max_vel = (x_max - x_min) / 6
+    max_vel = (x_max - x_min) / 10
     
     def fitness(x):
         heading, speed, t_release, fuse_delay = x
@@ -352,7 +352,7 @@ def problem2_pso_optimize(
         return -tot
 
     from pso1 import PSO
-    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=0.8)
+    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=1.5, W=0.91)
     fit_var_list, best_pos = pso_solver.update_ndim()
     best_heading, best_speed, best_t_release, best_fuse = best_pos[0]
     v_uav = uav_velocity_from_heading(best_speed, best_heading)
@@ -591,7 +591,7 @@ def problem2_cma_optimize(heading_span=math.pi*2/3, uav_name="FY1", sigma=15, ma
 def problem3_pso_FY1_three(
     heading_span=math.pi/2,
     uav_name="FY1",
-    iter_num=300,  # increase for higher dim
+    iter_num=100,  # increase for higher dim
     pop_size=500,   # increase for higher dim
     dt_refine=0.5  # sampling dt for joint shielding
 ):
@@ -610,7 +610,7 @@ def problem3_pso_FY1_three(
     dim = 8  # heading, speed, t_release1, fuse1, t_release2, fuse2, t_release3, fuse3
     x_max = np.array([heading_max, speed_max, t_release_max, fuse_max, t_release_max, fuse_max, t_release_max, fuse_max])
     x_min = np.array([heading_min, speed_min, t_release_min, fuse_min, t_release_min, fuse_min, t_release_min, fuse_min])
-    max_vel = (x_max - x_min) / 6
+    max_vel = (x_max - x_min) / 10
     
     # Joint shielding function
     def joint_shield_time(explosions, dt_sample=dt_refine, radius=cloud_radius):
@@ -711,7 +711,7 @@ def problem3_pso_FY1_three(
 
     from pso1 import PSO
     #pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=1.3)
-    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=0.8)
+    pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2.5, C2=1.5, W=0.98)
     
     fit_var_list, best_pos = pso_solver.update_ndim()
     best_heading, best_speed, tr1, fu1, tr2, fu2, tr3, fu3 = best_pos
@@ -858,11 +858,11 @@ def problem3_de_FY1_three(
     pop_size=200,   # increase for higher dim
     dt_refine=0.05  # sampling dt for joint shielding
 ):
-    heading_min = -math.pi
-    heading_max = math.pi
+    heading_min = 0
+    heading_max = 2*math.pi
     speed_min, speed_max = 70,140
-    t_release_min, t_release_max = 0, 70
-    fuse_min, fuse_max =0,40
+    t_release_min, t_release_max = 0, 20
+    fuse_min, fuse_max =0,10
     dim = 8  # heading, speed, t_release1, fuse1, t_release2, fuse2, t_release3, fuse3
     bounds = [
         (heading_min, heading_max),
