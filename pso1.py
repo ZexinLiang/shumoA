@@ -115,12 +115,20 @@ class PSO:
         if value < self.get_bestFitnessValue():
             self.set_bestFitnessValue(value)
             self.set_bestPosition(pos_value)
-
-    def update_ndim(self):
+            
+    def update_ndim(self, mutation_rate=0.1):
         for i in range(self.iter_num):
             for part in self.Particle_list:
                 self.update_vel(part)
                 self.update_pos(part)
+
+                # 变异：以概率 mutation_rate 扰动
+                if np.random.rand() < mutation_rate:
+                    noise = np.random.normal(0, 0.1, self.dim)  # 高斯扰动
+                    new_pos = part.get_pos() + noise
+                    new_pos = np.clip(new_pos, self.x_min, self.x_max)
+                    part.set_pos(new_pos)
+
             self.fitness_val_list.append(self.get_bestFitnessValue())
             print(f'第{i+1}次最佳适应值为 {self.get_bestFitnessValue():.6f}')
             if self.get_bestFitnessValue() < self.tol:
@@ -130,21 +138,15 @@ class PSO:
 
     # def update_ndim(self):
     #     for i in range(self.iter_num):
-    #         # 并行更新速度
-    #         Parallel(n_jobs=-1)(
-    #             delayed(self.update_vel)(part) for part in self.Particle_list
-    #         )
-    #         # 并行更新位置和适应度
-    #         Parallel(n_jobs=-1)(
-    #             delayed(self.update_pos)(part) for part in self.Particle_list
-    #         )
+    #         for part in self.Particle_list:
+    #             self.update_vel(part)
+    #             self.update_pos(part)
     #         self.fitness_val_list.append(self.get_bestFitnessValue())
     #         print(f'第{i+1}次最佳适应值为 {self.get_bestFitnessValue():.6f}')
     #         if self.get_bestFitnessValue() < self.tol:
     #             break
 
     #     return self.fitness_val_list, self.get_bestPosition()
-
 
 if __name__ == '__main__':
     # 参数配置
