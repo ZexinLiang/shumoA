@@ -4,21 +4,25 @@ from joblib import Parallel, delayed
 
 # 测试用适应度函数：Rosenbrock 函数
 def fit_fun(x):
-    # x 是形状 (1, dim) 的数组
-    x = x[0]
+    # # x 是形状 (1, dim) 的数组
+    # x = x[0]
+    # return sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0)
     return sum(100.0 * (x[1:] - x[:-1] ** 2.0) ** 2.0 + (1 - x[:-1]) ** 2.0)
 
 
 class Particle:
     def __init__(self, x_max, x_min, max_vel, dim, fitness):
-        # 初始化位置
-        self.__pos = np.random.uniform(x_min, x_max, (1, dim))
-        # 初始化速度
-        self.__vel = np.random.uniform(-max_vel, max_vel, (1, dim))
+        # # 初始化位置
+        # self.__pos = np.random.uniform(x_min, x_max, (1, dim))
+        # # 初始化速度
+        # self.__vel = np.random.uniform(-max_vel, max_vel, (1, dim))
+        self.__pos = np.random.uniform(x_min, x_max, dim)   # 一维向量
+        self.__vel = np.random.uniform(-max_vel, max_vel, dim)  
         # 个体历史最优
         self.__bestPos = self.__pos.copy()
         self.__fitnessValue = fitness(self.__pos)
         self.fitness = fitness
+
 
     def set_pos(self, value):
         self.__pos = value
@@ -60,7 +64,7 @@ class PSO:
         self.max_vel = max_vel
         self.tol = tol
         self.best_fitness_value = best_fitness_value
-        self.best_position = np.zeros((1, dim))
+        self.best_position = np.zeros(dim)
         self.fitness_val_list = []
         self.fitness = fitness
 
@@ -69,12 +73,16 @@ class PSO:
             Particle(self.x_max, self.x_min, self.max_vel, self.dim, self.fitness)
             for _ in range(self.size)
         ]
-
-        # 初始化全局最优
         for part in self.Particle_list:
-            if part.get_fitness_value() < self.best_fitness_value:
-                self.best_fitness_value = part.get_fitness_value()
+            value = part.get_fitness_value()
+            if value < self.best_fitness_value:
+                self.best_fitness_value = value
                 self.best_position = part.get_pos().copy()
+                # 初始化全局最优
+        # for part in self.Particle_list:
+        #     if part.get_fitness_value() < self.best_fitness_value:
+        #         self.best_fitness_value = part.get_fitness_value()
+        #         self.best_position = part.get_pos().copy()
 
     def set_bestFitnessValue(self, value):
         self.best_fitness_value = value
@@ -146,7 +154,7 @@ if __name__ == '__main__':
         iter_num=2000,      # 最大迭代次数
         x_max=5,            # 搜索上界
         x_min=-5,           # 搜索下界
-        max_vel=1.0,        # 最大速度
+        max_vel=10,        # 最大速度
         tol=1e-6,           # 收敛条件
         fitness=fit_fun,    # 适应度函数
         C1=2, C2=2, W=0.8   # 参数

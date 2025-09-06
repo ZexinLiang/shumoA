@@ -63,6 +63,7 @@ def explosion_position(uav_pos0: np.ndarray, v_uav: np.ndarray, t_release: float
     """
     t_expl = float(t_release + fuse_delay)
     release_pos = uav_pos0 + v_uav * t_release
+    # print("Release pos:", release_pos)
     dt = float(fuse_delay)
     disp = v_uav * dt + np.array([0.0, 0.0, -0.5 * g * dt * dt])
     return t_expl, release_pos + disp
@@ -290,16 +291,23 @@ def total_time(intervals: List[Tuple[float,float]]) -> float:
 # 问题1
 # --------------------------
 def problem1():
-    speed = 120.0# 无人机速度
-    t_release = 1.5 # 投放时间
-    fuse_delay = 3.6 # 引信延时
-    heading = math.atan2((fake_target - FY_pos["FY1"])[1], (fake_target - FY_pos["FY1"])[0])
+    # speed = 120.0# 无人机速度
+    # t_release = 1.5 # 投放时间
+    # fuse_delay = 3.6 # 引信延时
+    # heading = math.atan2((fake_target - FY_pos["FY1"])[1], (fake_target - FY_pos["FY1"])[0])
+
+    speed = 139.9999999691522# 无人机速度
+    t_release = 0.9324383658527111 # 投放时间
+    fuse_delay = 5.691844400246282e-06 # 引信延时
+    heading = 5.106762835425065 / 180.0 * math.pi
+
 
     # 计算引爆位置和时间
     v_uav = uav_velocity_from_heading(speed, heading)
     t_expl, expl_pos = explosion_position(FY_pos["FY1"], v_uav, t_release, fuse_delay)
+    print("Explosion", expl_pos)
     #计算遮蔽时间区间
-    intervals = find_shield_intervals_for_explosion(M1_pos0, expl_pos, t_expl, dt_sample=0.01)
+    intervals = find_shield_intervals_for_explosion_P(M1_pos0, expl_pos, t_expl, dt_sample=0.01)
     tot = total_time(intervals)
     out = {
         "t_release": t_release,
@@ -346,7 +354,7 @@ def problem2_pso_optimize(
         tot = total_time(intervals)
         return -tot
 
-    from pso import PSO
+    from pso1 import PSO
     pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness)
     fit_var_list, best_pos = pso_solver.update_ndim()
     best_heading, best_speed, best_t_release, best_fuse = best_pos[0]
@@ -372,8 +380,8 @@ def problem3_pso_FY1_three(
     heading_span=math.pi/2,
     uav_name="FY1",
     iter_num=1000,  # increase for higher dim
-    pop_size=50,   # increase for higher dim
-    dt_refine=0.05  # sampling dt for joint shielding
+    pop_size=150,   # increase for higher dim
+    dt_refine=0.02  # sampling dt for joint shielding
 ):
     """
     Return best plan for FY1 to drop 3 munitions to maximize M1 shielding using PSO.
@@ -386,8 +394,10 @@ def problem3_pso_FY1_three(
     fuse_min, fuse_max = 0.0, 40.0
 
     dim = 8  # heading, speed, t_release1, fuse1, t_release2, fuse2, t_release3, fuse3
-    x_max = np.array([heading_max, speed_max, t_release_max, fuse_max, t_release_max, fuse_max, t_release_max, fuse_max])
-    x_min = np.array([heading_min, speed_min, t_release_min, fuse_min, t_release_min, fuse_min, t_release_min, fuse_min])
+    # x_max = np.array([heading_max, speed_max, t_release_max, fuse_max, t_release_max, fuse_max, t_release_max, fuse_max])
+    # x_min = np.array([heading_min, speed_min, t_release_min, fuse_min, t_release_min, fuse_min, t_release_min, fuse_min])
+    x_max = np.array([math.pi*4/5, 140, 1, 4, 4.2, 6, 6.1, 7])
+    x_min = np.array([math.pi*6/5, 130, 0, 2.8, 2.6, 4, 5.2, 5])
     max_vel = (x_max - x_min) / 2
     
     # Joint shielding function
@@ -487,7 +497,7 @@ def problem3_pso_FY1_three(
         tot = joint_shield_time(explosions)
         return -tot  # maximize
 
-    from pso import PSO
+    from pso1 import PSO
     #pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=1.3)
     pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=1.18)
     
@@ -656,7 +666,7 @@ def problem4_pso_three_uavs_one_each(
         tot = joint_shield_time(explosions)
         return -tot  # maximize total shield time
 
-    from pso import PSO
+    from pso1 import PSO
     pso_solver = PSO(dim, pop_size, iter_num, x_max, x_min, max_vel, tol=-1e9, fitness=fitness, C1=2, C2=2, W=0.5)
     fit_var_list, best_pos = pso_solver.update_ndim()
     # Reconstruct best plan
