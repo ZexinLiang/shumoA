@@ -345,8 +345,10 @@ def joint_shield_time(explosions, dt_sample=0.02, radius=cloud_radius):
                 refined.append((s_ref, e_ref))
         merged = merge_intervals(refined)
         return total_time(merged)
+def ang_diff(a, b):
+    d = (a - b + math.pi) % (2 * math.pi) - math.pi
+    return abs(d) < 1e-9
 #problems
-
 #问题1
 def problem1():
     speed = 120.0# 无人机速度
@@ -714,12 +716,208 @@ def problem4(
         "pairwise_df": pair_df,
         "explosion_times": explosion_times
     }
- 
+
+# ---------------------- Problem 5 修正版 ----------------------
+def problem5_greedy(
+    heading_span=math.pi,
+    heading_steps=15,
+    speed_steps=8,
+    t_release_grid=None,
+    fuse_grid=None,
+    dt_coarse=0.3,
+    dt_refine=0.10,
+    max_rounds=20,
+    coarse_topk_per_uav=500
+):
+    if t_release_grid is None:
+        t_release_grid = np.linspace(0.0, 70.0, 71)
+    if fuse_grid is None:
+        fuse_grid = np.linspace(0.5, 40.0, 40)
+
+    uav_list = list(FY_pos.keys())
+    missiles = {"M1": M1_pos0, "M2": M2_pos0, "M3": M3_pos0}
+    missile_names = list(missiles.keys())
+
+    candidates = []
+    print("[Problem5] Generating candidate explosions (coarse filter)...")
+    for uav in uav_list:
+        base_heading = math.atan2((fake_target - FY_pos[uav])[1], (fake_target - FY_pos[uav])[0])
+        h_half = heading_span / 2.0
+        headings = np.linspace(0, 2*math.pi, heading_steps)
+        try:
+            speed_min_glob, speed_max_glob = uav_speed_bounds
+        except Exception:
+            speed_min_glob, speed_max_glob = 70.0, 140.0
+        speeds = np.linspace(speed_min_glob, speed_max_glob, speed_steps)
+
+        for heading in headings:
+            for speed in speeds:
+                v = uav_velocity_from_heading(speed, heading)
+                for tr in t_release_grid:
+                    for fu in fuse_grid:
+                        t_expl, expl_pos = explosion_position(FY_pos[uav], v, tr, fu)
+                        times = np.arange(t_expl, t_expl + cloud_duration + dt_coarse * 0.5, dt_coarse)
+                        if times.size == 0:
+                            continue
+                        Ms_all = {m: np.array([missile_pos(missiles[m], tt) for tt in times]) for m in missile_names}
+                        Cs = np.array([cloud_center_at(tt, expl_pos, t_expl) for tt in times])
+                        coarse_flags = {}
+                        any_hit = False
+                        for m in missile_names:
+                            try:
+                                flags = segment_sphere_intersect_times(Ms_all[m], true_target, Cs, cloud_radius)
+                                hit = np.any(flags)
+                            except Exception:
+                                hit = False
+                                for idx_t, tt in enumerate(times):
+                                    mpos = Ms_all[m][idx_t]
+                                    cpos = Cs[idx_t]
+                                    if 'segment_sphere_intersect_single' in globals():
+                                        if segment_sphere_intersect_single(mpos, true_target, cpos, cloud_radius):
+                                            hit = True
+                                            break
+                                    else:
+                                        raise RuntimeError("[problem5_greedy] 没有可用的 segment_sphere_intersect 函数")
+                            coarse_flags[m] = bool(hit)
+                            if hit:
+                                any_hit = True
+                        if any_hit:
+                            candidates.append({
+                                "uav": uav, "heading": float(heading), "speed": float(speed),
+                                "t_release": float(tr), "fuse": float(fu), "t_explosion": float(t_expl),
+                                "explosion_pos": expl_pos, "coarse_flags": coarse_flags,
+                                "picked": False, "_intervals_per_m": None
+                            })
+    print(f"[Problem5] Coarse candidates count: {len(candidates)}")
+
+    if coarse_topk_per_uav is not None and len(candidates) > 0:
+        new_cands = []
+        for uav in uav_list:
+            cands_uav = [c for c in candidates if c["uav"] == uav]
+            cands_uav_sorted = sorted(cands_uav, key=lambda cc: sum(1 for v in cc["coarse_flags"].values() if v), reverse=True)
+            new_cands.extend(cands_uav_sorted[:coarse_topk_per_uav])
+        candidates = new_cands
+        print(f"[Problem5] After top-K prune per-uav, candidates count: {len(candidates)}")
+
+    assigned = {uav: [] for uav in uav_list}
+    locked_v = {uav: None for uav in uav_list}
+    per_uav_count = {uav: 0 for uav in uav_list}
+    per_uav_release_times = {uav: [] for uav in uav_list}
+    existing_intervals_per_missile = {m: [] for m in missile_names}
+
+    rounds = 0
+    while rounds < max_rounds:
+        rounds += 1
+        best_candidate_info = None
+        best_marginal = 0.0
+
+        for cand in candidates:
+            if cand.get("picked", False):
+                continue
+            uav = cand["uav"]
+            if per_uav_count[uav] >= max_per_uav_problem5:
+                continue
+            if locked_v[uav] is not None:
+                locked_heading, locked_speed = locked_v[uav]
+                if ang_diff(cand["heading"], locked_heading) > 1e-3 or abs(cand["speed"] - locked_speed) > 1e-6:
+                    continue
+            tr = cand["t_release"]
+            conflict = any(abs(et - tr) < (min_drop_interval - 1e-9) for et in per_uav_release_times[uav])
+            if conflict:
+                continue
+
+            if cand["_intervals_per_m"] is None:
+                intervals_per_m = {}
+                for m in missile_names:
+                    if not cand["coarse_flags"].get(m, False):
+                        intervals_per_m[m] = []
+                    else:
+                        ints = find_shield_intervals_for_explosion(missiles[m], cand["explosion_pos"], cand["t_explosion"], dt_sample=dt_refine)
+                        intervals_per_m[m] = ints if ints is not None else []
+                cand["_intervals_per_m"] = intervals_per_m
+            else:
+                intervals_per_m = cand["_intervals_per_m"]
+
+            new_totals = {}
+            old_sum = 0.0
+            for m in missile_names:
+                old = existing_intervals_per_missile[m]
+                new_union = merge_intervals(old + intervals_per_m[m])
+                new_totals[m] = total_time(new_union)
+                old_sum += total_time(old)
+            new_sum = sum(new_totals.values())
+            marginal = new_sum - old_sum
+
+            if marginal > best_marginal + 1e-12:
+                best_marginal = marginal
+                best_candidate_info = {"cand": cand, "intervals_per_m": intervals_per_m, "marginal": marginal, "new_totals": new_totals}
+
+        if best_candidate_info is None:
+            print(f"[Problem5] Greedy stopped at round {rounds}, no positive marginal found.")
+            break
+
+        cand = best_candidate_info["cand"]
+        cand["picked"] = True
+        uav = cand["uav"]
+        assigned[uav].append(cand)
+        per_uav_count[uav] += 1
+        per_uav_release_times[uav].append(cand["t_release"])
+        if locked_v[uav] is None:
+            locked_v[uav] = (cand["heading"], cand["speed"])
+        for m in missile_names:
+            existing_intervals_per_missile[m] = merge_intervals(existing_intervals_per_missile[m] + best_candidate_info["intervals_per_m"][m])
+
+        cur_total_sum = sum(total_time(existing_intervals_per_missile[m]) for m in missile_names)
+        print(f"[Problem5] Round {rounds}: pick {uav} tr={cand['t_release']}, fuse={cand['fuse']}, marginal={best_candidate_info['marginal']:.6f}, total_sum={cur_total_sum:.6f}")
+
+    rows = []
+    for uav in uav_list:
+        for i, a in enumerate(assigned[uav], start=1):
+            intervals_per_m = a.get("_intervals_per_m")
+            if intervals_per_m is None:
+                intervals_per_m = {}
+                for m in missile_names:
+                    ints = find_shield_intervals_for_explosion(missiles[m], a["explosion_pos"], a["t_explosion"], dt_sample=dt_refine)
+                    intervals_per_m[m] = ints if ints is not None else []
+            rows.append({
+                "uav": uav,
+                "drop_idx": i,
+                "t_release": a["t_release"],
+                "fuse_delay": a["fuse"],
+                "t_explosion": a["t_explosion"],
+                "explosion_x": float(a["explosion_pos"][0]),
+                "explosion_y": float(a["explosion_pos"][1]),
+                "explosion_z": float(a["explosion_pos"][2]),
+                "intervals_M1": ";".join([f"{s:.6f}-{e:.6f}" for s,e in intervals_per_m["M1"]]) if intervals_per_m.get("M1") else "",
+                "intervals_M2": ";".join([f"{s:.6f}-{e:.6f}" for s,e in intervals_per_m["M2"]]) if intervals_per_m.get("M2") else "",
+                "intervals_M3": ";".join([f"{s:.6f}-{e:.6f}" for s,e in intervals_per_m["M3"]]) if intervals_per_m.get("M3") else ""
+            })
+    df = pd.DataFrame(rows)
+
+    per_m = []
+    for m in missile_names:
+        merged_intervals = merge_intervals(existing_intervals_per_missile[m])
+        per_m.append({
+            "missile": m,
+            "total_shield": total_time(merged_intervals),
+            "intervals": ";".join([f"{s:.6f}-{e:.6f}" for s,e in merged_intervals])
+        })
+    df2 = pd.DataFrame(per_m)
+
+    summary_val = sum(total_time(existing_intervals_per_missile[m]) for m in missile_names)
+    with pd.ExcelWriter("result3.xlsx") as writer:
+        df.to_excel(writer, sheet_name="drops", index=False)
+        df2.to_excel(writer, sheet_name="per_missile", index=False)
+        pd.DataFrame([{ "total_sum": summary_val }]).to_excel(writer, sheet_name="summary", index=False)
+
+    return {"assigned": assigned, "per_missile_intervals": existing_intervals_per_missile}
+
 if __name__ == "__main__":
     #设定随机数种子
     np.random.seed(42)
     random.seed(42)
-    problem1()
-    problem2()
-    problem3()
-    problem4()
+    # problem1()
+    # problem2()
+    # problem3()
+    # problem4()
+    problem5_greedy()

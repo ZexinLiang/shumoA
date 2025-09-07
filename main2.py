@@ -1491,8 +1491,8 @@ def problem5_greedy(
     candidates = []  # each candidate: dict with uav, heading, speed, t_release, fuse, t_explosion, explosion_pos, coarse_flags_per_missile
     for uav in uav_list:
         base_heading = math.atan2((fake_target - FY_pos[uav])[1], (fake_target - FY_pos[uav])[0])
-        headings = np.linspace(base_heading - heading_span/2, base_heading + heading_span/2, heading_steps)
-        speeds = np.linspace(uav_speed_bounds[0], uav_speed_bounds[1], speed_steps)
+        headings = np.linspace(0, 2*math.pi, heading_steps)
+        speeds = np.linspace(70, 140, speed_steps)
         for heading in headings:
             for speed in speeds:
                 v = uav_velocity_from_heading(speed, heading)
@@ -1832,3 +1832,4 @@ if __name__ == "__main__":
     # prob3_check(179.649/180*math.pi, 139.992, 0.006, 3.609, 3.658, 5.391, 5.577, 6.055)
     # problem2_pso_simple_optimize()
     # prob4_check(6.379/180*math.pi, 80.014, 0.437, 0.750,-39.999/180*math.pi, 138.944, 13.179, 2.336,80.120/180*math.pi, 139.113, 20.341, 2.155)
+    problem5_greedy()
